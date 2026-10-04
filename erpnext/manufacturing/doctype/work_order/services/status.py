@@ -118,6 +118,9 @@ class StatusService:
 		else:
 			status = "Cancelled"
 
+		if status in ["Closed", "Stopped"]:
+			return status
+
 		if self._is_partial_skip_transfer():
 			status = "In Process"
 

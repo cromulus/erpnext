@@ -1231,6 +1231,52 @@ class TestWorkOrder(ERPNextTestSuite):
 			close_work_order(wo_order, "Closed")
 			self.assertEqual(wo_order.get("status"), "Closed")
 
+	@ERPNextTestSuite.change_settings("Stock Settings", {"enable_stock_reservation": 1})
+	def test_close_partially_manufactured_work_order_with_stock_reservation(self):
+		wo = self.make_partially_manufactured_reserved_work_order()
+		self.assertEqual(wo.status, "In Process")
+		self.assertTrue(
+			frappe.get_all("Stock Reservation Entry", filters={"voucher_no": wo.name, "docstatus": 1})
+		)
+
+		# closing cancels the reservations and recomputes the status, which must stay Closed
+		self.assertEqual(close_work_order(wo.name, "Closed"), "Closed")
+		self.assertEqual(frappe.db.get_value("Work Order", wo.name, "status"), "Closed")
+		self.assertFalse(
+			frappe.get_all("Stock Reservation Entry", filters={"voucher_no": wo.name, "docstatus": 1})
+		)
+
+	@ERPNextTestSuite.change_settings("Stock Settings", {"enable_stock_reservation": 1})
+	def test_stopped_partially_manufactured_work_order_keeps_status(self):
+		wo = self.make_partially_manufactured_reserved_work_order()
+
+		stop_unstop(wo.name, "Stopped")
+		wo.reload()
+		self.assertEqual(wo.status, "Stopped")
+		self.assertEqual(wo.get_status(), "Stopped")
+
+		# resuming still recomputes the status from the stock entries
+		stop_unstop(wo.name, "Resumed")
+		self.assertEqual(frappe.db.get_value("Work Order", wo.name, "status"), "In Process")
+
+	def make_partially_manufactured_reserved_work_order(self):
+		source_warehouse = "Stores - _TC"
+		production_item = make_item(properties={"is_stock_item": 1}).name
+		rm_item = make_item(properties={"is_stock_item": 1}).name
+		make_bom(item=production_item, source_warehouse=source_warehouse, raw_materials=[rm_item])
+		test_stock_entry.make_stock_entry(item_code=rm_item, target=source_warehouse, qty=10, basic_rate=100)
+
+		wo = make_wo_order_test_record(
+			item=production_item,
+			qty=10,
+			skip_transfer=1,
+			reserve_stock=1,
+			source_warehouse=source_warehouse,
+		)
+		frappe.get_doc(make_stock_entry(wo.name, "Manufacture", 4)).submit()
+		wo.reload()
+		return wo
+
 	def test_fix_time_operations(self):
 		bom = frappe.get_doc(
 			{
