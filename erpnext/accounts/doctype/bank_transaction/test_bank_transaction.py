@@ -11,6 +11,7 @@ from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool 
 	get_linked_payments,
 	reconcile_vouchers,
 )
+from erpnext.accounts.doctype.bank_transaction.bank_transaction import unreconcile_transaction
 from erpnext.accounts.doctype.mode_of_payment.test_mode_of_payment import (
 	set_default_account_for_mode_of_payment,
 )
@@ -93,6 +94,44 @@ class TestBankTransaction(ERPNextTestSuite):
 		self.assertEqual(bank_transaction.docstatus, DocStatus.submitted())
 		self.assertEqual(bank_transaction.unallocated_amount, 1700)
 		self.assertEqual(bank_transaction.payment_entries, [])
+
+	# Unreconciling must remove every matched voucher, not only every other one
+	def test_unreconcile_removes_all_payment_entries(self):
+		bank_transaction = add_transaction(
+			self.bank_account,
+			"_Test Bank Transaction with three payments",
+			"2018-10-23",
+			deposit=1200,
+		)
+		payments = [
+			pay_purchase_invoice(self.gl_account, "Mr G", 400, f"Herr G Split {i}", "2018-10-24")
+			for i in range(3)
+		]
+		vouchers = json.dumps(
+			[
+				{
+					"payment_doctype": "Payment Entry",
+					"payment_name": payment.name,
+					"amount": 400,
+				}
+				for payment in payments
+			]
+		)
+		reconcile_vouchers(bank_transaction.name, vouchers)
+
+		bank_transaction.reload()
+		self.assertEqual(len(bank_transaction.payment_entries), 3)
+		for payment in payments:
+			self.assertTrue(frappe.db.get_value("Payment Entry", payment.name, "clearance_date"))
+
+		unreconcile_transaction(bank_transaction.name)
+
+		bank_transaction.reload()
+		self.assertEqual(bank_transaction.payment_entries, [])
+		self.assertEqual(bank_transaction.allocated_amount, 0)
+		self.assertEqual(bank_transaction.unallocated_amount, 1200)
+		for payment in payments:
+			self.assertFalse(frappe.db.get_value("Payment Entry", payment.name, "clearance_date"))
 
 	# Amending a reconciled payment entry must not carry over its clearance date
 	def test_clearance_date_cleared_on_amend(self):

@@ -240,7 +240,7 @@ class BankTransaction(Document):
 
 	@frappe.whitelist()
 	def remove_payment_entries(self):
-		for payment_entry in self.payment_entries:
+		for payment_entry in list(self.payment_entries):
 			self.remove_payment_entry(payment_entry)
 
 		self.save()  # runs before_update_after_submit
